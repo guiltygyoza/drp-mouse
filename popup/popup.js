@@ -52,6 +52,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function updateUI(state) {
+		console.log('>> updateUI', state);
         // Get and display tab ID first, independent of state
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         document.getElementById('tabId').innerText = tab ? tab.id : 'No tab';
@@ -86,7 +87,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function updateNodeList() {
         console.log("Updating node list");
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        const response = await chrome.runtime.sendMessage({
+        const response = await chrome.tabs.sendMessage(tab.id, {
             type: 'GET_NODES',
             tabId: tab.id
         });
@@ -106,19 +107,31 @@ document.addEventListener('DOMContentLoaded', async () => {
             nodeItem.addEventListener('click', async () => {
                 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
                 // alert(`tabId ${tab.id} selects node ${nodeId}`);
-				await chrome.runtime.sendMessage({
-                    type: 'SELECT_NODE',
-                    nodeId,
-                    tabId: tab.id
-                });
+
+				chrome.tabs.query({active: true, currentWindow: true}, function(tabs){
+					chrome.tabs.sendMessage(
+						tabs[0].id,
+						{
+							type: 'SELECT_NODE',
+							nodeId,
+							tabId: tab.id
+						},
+						function(_) {
+						}
+					);
+				});
+
+
                 updateNodeList();
-                const state = await chrome.runtime.sendMessage({
-                    type: 'GET_NODE_STATE',
-                    tabId: tab.id
-                });
-                if (state && !state.error) {
-                    updateUI(state);
-                }
+
+				chrome.tabs.query({active: true, currentWindow: true}, function(tabs){
+					chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_NODE_STATE' }, function(state) {
+						if (state && !state.error) {
+							updateUI(state);
+						}
+					});
+				});
+
             });
             nodeList.appendChild(nodeItem);
         });
@@ -127,24 +140,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Create Node button handler
     createNodeButton.addEventListener('click', async () => {
         console.log("Create node clicked");
-        const response = await chrome.runtime.sendMessage({ type: 'CREATE_NODE' });
-        console.log("Create node response:", response);
-        if (!response) {
-            console.error("No response received from background script");
-            return;
-        }
-        if (response.error) {
-            console.error("Error creating node:", response.error);
-            return;
-        }
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+		console.log(`chrome.tabs.sendMessage(${tab.id}, {type: 'CREATE_NODE'});`);
 
-        if (response.nodeId) {
-            await updateNodeList();
-            const state = await chrome.runtime.sendMessage({ type: 'GET_NODE_STATE' });
-            if (state && !state.error) {
-                updateUI(state);
-            }
-        }
+        chrome.tabs.sendMessage(tab.id, { type: 'CREATE_NODE' }, function(response) {
+			console.log("Create node response:", response);
+			if (!response) {
+				console.error("No response received from background script");
+				return;
+			}
+			if (response.error) {
+				console.error("Error creating node:", response.error);
+				return;
+			}
+
+			if (response.nodeId) {
+				updateNodeList();
+				chrome.tabs.query({active: true, currentWindow: true}, function(tabs){
+					chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_NODE_STATE' }, function(state) {
+						if (state && !state.error) {
+							updateUI(state);
+						}
+					});
+				});
+			}
+		});
+
+
     });
 
     // GO LIVE button handler
@@ -162,13 +184,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                     type: 'GO_LIVE'
                 });
                 setTimeout(async () => {
-                    const state = await chrome.runtime.sendMessage({
-                        type: 'GET_NODE_STATE',
-                        tabId: tabs[0].id
-                    });
-                    if (state) {
-                        updateUI(state);
-                    }
+
+					chrome.tabs.query({active: true, currentWindow: true}, function(tabs){
+						chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_NODE_STATE' }, function(state) {
+							if (state && !state.error) {
+								updateUI(state);
+							}
+						});
+					});
                 }, 500);
             }
         });
@@ -176,24 +199,36 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Initial setup
     try {
-		await updateNodeList();
-		const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-		const state = await chrome.runtime.sendMessage({
-			type: 'GET_NODE_STATE',
-			tabId: tab.id  // Always pass the current tab ID
-		});
-		await updateUI(state || {});
-	} catch (error) {
-		console.error("Error during initial setup:", error);
-	}
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+		updateUI({});
+        // // Only proceed if we're on a valid webpage (not on chrome:// pages etc)
+        // if (tab && tab.url && tab.url.startsWith('http')) {
+        //     await updateNodeList();
+        //     const state = await chrome.tabs.sendMessage(tab.id, {
+        //         type: 'GET_NODE_STATE',
+        //         tabId: tab.id
+        //     });
+        //     await updateUI(state || {});
+        // } else {
+        //     // Update UI with empty state if we're not on a valid page
+        //     await updateUI({});
+        // }
+    } catch (error) {
+        console.error("Error during initial setup:", error);
+        await updateUI({});  // Still update UI with empty state on error
+    }
 
-    // Listen for state updates
-    chrome.runtime.onMessage.addListener(async (message) => {
+    // Listen for state updates from content script
+    chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         if (message.type === 'STATE_UPDATE') {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (tab.id === message.tabId) {  // Only update if it's for our tab
-                updateUI(message.state);
-                updateNodeList();
+            // Only update if the message is from our current tab
+            if (sender.tab && sender.tab.id === tab.id) {
+                const state = message.state;
+                if (state) {
+                    updateUI(state);
+                    updateNodeList();
+                }
             }
         }
     });

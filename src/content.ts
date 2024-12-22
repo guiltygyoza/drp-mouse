@@ -1,33 +1,132 @@
 import { CursorManager } from "./drp/cursorManager";
+import { DRPNode } from '@ts-drp/node';
+import type { DRPObject } from "@ts-drp/object";
+import { CursorDRP } from './drp/cursorDRP';
 
 const cursorManager = new CursorManager();
 let isLive = false;
 
+// Node management
+let nodes = new Map(); // map nodeId -> node
+let activeNodeId = "";
+let mapNodeIdToDrpIds = new Map();
+
+console.log("== CONTENT.TS IS LOADED ==");
+
+async function createNode() {
+    const node = new DRPNode();
+    await node.start();
+    const nodeId = node.networkNode.peerId;
+
+    // Add subscription for peer changes
+    node.addCustomGroupMessageHandler("", () => {
+        console.log("Peer change detected, broadcasting state update");
+        broadcastStateUpdate();
+    });
+
+    nodes.set(nodeId, node);
+	mapNodeIdToDrpIds.set(nodeId, []);
+
+    return nodeId;
+}
+
+function getNodeState() {
+    if (!activeNodeId) return null;
+    const node: DRPNode = nodes.get(activeNodeId);
+    if (!node) return null;
+
+	const drpId = mapNodeIdToDrpIds.get(node.networkNode.peerId);
+    const drpObject = node.objectStore.get(drpId);
+
+    return {
+        peerId: node.networkNode.peerId,
+        peers: node.networkNode.getAllPeers(),
+        discoveryPeers: node.networkNode.getGroupPeers("drp::discovery"),
+        drpId: drpObject ? drpObject.id : null
+    };
+}
+
+function broadcastStateUpdate() {
+    const state = getNodeState();
+    if (!state) return;
+    chrome.runtime.sendMessage({
+        type: 'STATE_UPDATE',
+        state,
+        tabId: state.peerId
+    });
+}
+
 // Handle messages from popup and background
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     switch (message.type) {
-        case 'GET_STATE':
-            // Forward state request to background script
-            chrome.runtime.sendMessage({ type: 'GET_NODE_STATE' }, sendResponse);
+        case 'CREATE_NODE':
+            createNode().then(nodeId => {
+                activeNodeId = nodeId;
+                sendResponse({ nodeId });
+                broadcastStateUpdate();
+            });
             return true;
 
-        case 'GO_LIVE':
-            isLive = true;
-            const currentHost = window.location.host;
-            const drpId = `cursor-presence-${currentHost}`;
-            chrome.runtime.sendMessage({
-                type: 'CREATE_DRP_OBJECT',
-                drpId
+        case 'GET_NODES':
+            sendResponse({
+                nodes: Array.from(nodes.keys()),
+                activeNodeId
             });
-            setupMouseTracking();
             break;
 
-        case 'LEAVE_ROOM':
-            isLive = false;
-            chrome.runtime.sendMessage({ type: 'LEAVE_DRP_OBJECT' });
-            removeCursors();
-            document.removeEventListener("mousemove", handleMouseMove);
+        case 'SELECT_NODE':
+            activeNodeId = message.nodeId;
+            broadcastStateUpdate();
+            sendResponse({ success: true });
             break;
+
+        case 'GET_NODE_STATE':
+            sendResponse(getNodeState());
+            break;
+
+        case 'GO_LIVE':
+            (async () => {
+                isLive = true;
+                const currentHost = window.location.host;
+                const drpId = `cursor-presence-${currentHost}`;
+                const node = nodes.get(activeNodeId);
+                if (node) {
+                    const drpObject = await node.createObject(new CursorDRP(), drpId);
+                    // Add subscription for cursor updates
+                    node.objectStore.subscribe(drpObject.id, (_: unknown, obj: DRPObject) => {
+                        const cursorDRP = obj.drp as CursorDRP;
+                        const users = cursorDRP.getUsers();
+                        users.forEach(userId => {
+                            if (userId !== node.networkNode.peerId) {
+                                const position = cursorDRP.getCursorPosition(userId);
+                                if (position) {
+                                    if (!cursorManager.hasCursor(userId)) {
+                                        cursorManager.createCursor(userId);
+                                    }
+                                    cursorManager.updateCursor(userId, [position.x, position.y]);
+                                }
+                            }
+                        });
+                    });
+                    setupMouseTracking();
+                    broadcastStateUpdate();
+                }
+                sendResponse({ success: true });
+            })();
+            return true;
+
+        // case 'LEAVE_ROOM':
+        //     isLive = false;
+        //     node = nodes.get(activeNodeId);
+        //     if (node) {
+        //         const drpObject = node.drpObjects.get('cursor');
+        //         if (drpObject) {
+        //             leaveNodeData.drpObjects.delete('cursor');
+        //         }
+        //     }
+        //     removeCursors();
+        //     document.removeEventListener("mousemove", handleMouseMove);
+        //     break;
 
         case 'CURSOR_UPDATE':
             if (isLive && message.userId !== message.currentPeerId) {
@@ -45,17 +144,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             break;
 
         case 'URL_CHANGED':
-            if (isLive) {
-                removeCursors();
-                if (message.autoJoin) {
-                    const newDrpId = `cursor-presence-${new URL(message.url).host}`;
-                    chrome.runtime.sendMessage({
-                        type: 'CREATE_DRP_OBJECT',
-                        drpId: newDrpId
-                    });
+            (async () => {
+                if (isLive) {
+                    removeCursors();
+                    if (message.autoJoin) {
+                        const node: DRPNode = nodes.get(activeNodeId);
+                        if (node) {
+                            const newDrpId = `cursor-presence-${new URL(message.url).host}`;
+                            const drpObject = await node.createObject(new CursorDRP(), newDrpId);
+                            setupMouseTracking();
+                            broadcastStateUpdate();
+                        }
+                    }
+                    sendResponse({ success: true });
                 }
-            }
-            break;
+            })();
+            return true;
     }
 });
 
@@ -63,10 +167,14 @@ function handleMouseMove(event: MouseEvent) {
     if (!isLive) return;
 
     const position = { x: event.clientX, y: event.clientY };
-    chrome.runtime.sendMessage({
-        type: 'UPDATE_CURSOR_POSITION',
-        position
-    });
+    const node: DRPNode = nodes.get(activeNodeId);
+    if (node) {
+        const drpObject = node.objectStore.get('cursor');
+        if (drpObject) {
+            const cursorDRP = drpObject.drp as CursorDRP;
+            cursorDRP.updateCursor(node.networkNode.peerId, position);
+        }
+    }
 }
 
 function setupMouseTracking() {
@@ -95,7 +203,13 @@ function removeCursors() {
 // Cleanup on page unload
 window.addEventListener("unload", () => {
     if (isLive) {
-        chrome.runtime.sendMessage({ type: 'LEAVE_DRP_OBJECT' });
+        const node: DRPNode = nodes.get(activeNodeId);
+        if (node) {
+            const drpObject = node.objectStore.get('cursor');
+            if (drpObject) {
+                node.objectStore.remove('cursor');
+            }
+        }
     }
     removeCursors();
 });

@@ -7,6 +7,10 @@
     "activeTab",
     "tabs"
   ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "action": {
     "default_popup": "popup/popup.html"
   },
