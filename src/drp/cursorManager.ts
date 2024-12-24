@@ -25,11 +25,10 @@ export class CursorManager {
 
         // Add user ID label
         const label = document.createElement('span');
-        label.textContent = userId.slice(0, 4);
+        label.textContent = userId.slice(-4);
         label.style.position = 'absolute';
         label.style.top = '100%';
-        label.style.left = '50%';
-        label.style.transform = 'translateX(-50%)';
+        label.style.transform = 'translateX(-50%) translateY(100%)';
         label.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
         label.style.color = 'white';
         label.style.padding = '2px 4px';
@@ -37,7 +36,7 @@ export class CursorManager {
         label.style.fontSize = '12px';
         cursor.appendChild(label);
 
-        document.body.appendChild(cursor);
+        document.body.prepend(cursor);
 
         const perfectCursor = new PerfectCursor((point) => {
             cursor.style.transform = `translate(${point[0]}px, ${point[1]}px)`;
