@@ -2,33 +2,48 @@ import { PerfectCursor } from 'perfect-cursors';
 import { getEmojiForNodeId } from '../utils/emojiMapper';
 
 export class CursorManager {
-    cursors: Map<string, {
-        element: HTMLDivElement;
-        perfectCursor: PerfectCursor;
-    }> = new Map();
+    cursors: Map<string, { element: HTMLDivElement; perfectCursor: PerfectCursor }> = new Map();
 
     hasCursor(nodeId: string): boolean {
         return this.cursors.has(nodeId);
     }
 
-    createCursor(nodeId: string) {
-        const cursorElement = document.createElement('div');
-        cursorElement.className = 'remote-cursor';
-        cursorElement.style.position = 'fixed';
-        cursorElement.style.pointerEvents = 'none';
-        cursorElement.style.zIndex = '9999';         // ensure on top
-        cursorElement.style.willChange = 'transform'; // optional performance hint
-        cursorElement.style.width = '24px';
-        cursorElement.style.height = '24px';
-        cursorElement.style.backgroundImage = `url(${getEmojiForNodeId(nodeId)})`;
-        cursorElement.style.backgroundSize = 'contain';
-        document.body.prepend(cursorElement);
+    createCursor(userId: string) {
+        const cursor = document.createElement('div');
+        cursor.className = 'cursor';
 
-        const perfectCursor = new PerfectCursor((point: number[]) => {
-            cursorElement.style.transform = `translate(${point[0]}px, ${point[1]}px)`;
+        // Create and add the GIF image
+        const cursorImg = document.createElement('img');
+        cursorImg.src = getEmojiForNodeId(userId);
+        cursorImg.style.width = '32px';
+        cursorImg.style.height = '32px';
+        cursorImg.style.position = 'absolute';
+        cursorImg.style.transform = 'translate(-50%, -50%)';
+        cursorImg.style.pointerEvents = 'none';
+        cursorImg.style.borderRadius = '50%';
+        cursor.appendChild(cursorImg);
+
+        // Add user ID label
+        const label = document.createElement('span');
+        label.textContent = userId.slice(0, 4);
+        label.style.position = 'absolute';
+        label.style.top = '100%';
+        label.style.left = '50%';
+        label.style.transform = 'translateX(-50%)';
+        label.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+        label.style.color = 'white';
+        label.style.padding = '2px 4px';
+        label.style.borderRadius = '4px';
+        label.style.fontSize = '12px';
+        cursor.appendChild(label);
+
+        document.body.appendChild(cursor);
+
+        const perfectCursor = new PerfectCursor((point) => {
+            cursor.style.transform = `translate(${point[0]}px, ${point[1]}px)`;
         });
 
-        this.cursors.set(nodeId, { element: cursorElement, perfectCursor });
+        this.cursors.set(userId, { element: cursor, perfectCursor });
     }
 
     updateCursor(nodeId: string, point: [number, number]) {

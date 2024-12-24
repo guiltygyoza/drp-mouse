@@ -21,7 +21,8 @@
   "web_accessible_resources": [{
     "resources": [
       "popup/*",
-      "dist/*"
+      "dist/*",
+	  "images/*.gif"
     ],
     "matches": ["<all_urls>"]
   }]
