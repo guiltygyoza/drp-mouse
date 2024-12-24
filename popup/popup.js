@@ -8,6 +8,55 @@ try {
     console.error("Error during initial load:", e);
 }
 
+async function sendMessage(message, tabId) {
+    if (!tabId) {
+        throw new Error("tabId is required", message.type);
+    }
+    // promisify the sendMessage call
+    return new Promise((resolve, reject) => {
+        chrome.tabs.sendMessage(tabId, { ...message, tabId }, (response) => {
+            if (chrome.runtime.lastError) {
+                return reject(chrome.runtime.lastError);
+            }
+            resolve(response);
+        });
+    });
+}
+
+async function sendGetNodes(tabId) {
+    return sendMessage({ type: 'GET_NODES' }, tabId);
+}
+
+async function sendSelectNode(nodeId, tabId) {
+    return sendMessage({ type: 'SELECT_NODE', nodeId }, tabId);
+}
+
+async function sendGetNodeState(tabId) {
+    return sendMessage({ type: 'GET_NODE_STATE' }, tabId);
+}
+
+async function sendCreateNode(tabId) {
+    return sendMessage({ type: 'CREATE_NODE' }, tabId);
+}
+
+async function sendGoLive(tabId) {
+    return await sendMessage({ type: 'GO_LIVE' }, tabId);
+}
+
+async function sendLeaveRoom(tabId) {
+    return sendMessage({ type: 'LEAVE_ROOM' }, tabId);
+}
+
+async function sendLeaveDRPObject(tabId) {
+    return sendMessage({ type: 'LEAVE_DRP_OBJECT' }, tabId);
+}
+
+async function sendCreateDRPObject(tabId) {
+    return sendMessage({ type: 'CREATE_DRP_OBJECT' }, tabId);
+}
+
+
+
 // Top of file
 console.log("Popup script loading");
 
@@ -83,18 +132,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    async function updateNodeList() {
-        console.log("Updating node list");
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        const response = await chrome.runtime.sendMessage({
-            type: 'GET_NODES',
-            tabId: tab.id
-        });
-        console.log("Got nodes response:", response);
+    async function updateNodeList(tabId) {
+        const response = await sendGetNodes(tabId);
 
         nodeList.innerHTML = '';
 
-        response.nodes.forEach(nodeId => {
+        for (const nodeId of response.nodes) {
             const nodeItem = document.createElement('div');
             nodeItem.className = 'node-item';
             if (nodeId === response.activeNodeId) {
@@ -106,28 +149,22 @@ document.addEventListener('DOMContentLoaded', async () => {
             nodeItem.addEventListener('click', async () => {
                 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
                 // alert(`tabId ${tab.id} selects node ${nodeId}`);
-				await chrome.runtime.sendMessage({
-                    type: 'SELECT_NODE',
-                    nodeId,
-                    tabId: tab.id
-                });
-                updateNodeList();
-                const state = await chrome.runtime.sendMessage({
-                    type: 'GET_NODE_STATE',
-                    tabId: tab.id
-                });
+                await sendSelectNode(nodeId, tab.id);
+                updateNodeList(tab.id);
+                const state = await sendGetNodeState(tab.id);
                 if (state && !state.error) {
                     updateUI(state);
                 }
             });
             nodeList.appendChild(nodeItem);
-        });
+        }
     }
 
     // Create Node button handler
     createNodeButton.addEventListener('click', async () => {
         console.log("Create node clicked");
-        const response = await chrome.runtime.sendMessage({ type: 'CREATE_NODE' });
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const response = await sendCreateNode(tab.id);
         console.log("Create node response:", response);
         if (!response) {
             console.error("No response received from background script");
@@ -139,8 +176,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         if (response.nodeId) {
-            await updateNodeList();
-            const state = await chrome.runtime.sendMessage({ type: 'GET_NODE_STATE' });
+            await updateNodeList(tab.id);
+            const state = await sendGetNodeState(tab.id);
             if (state && !state.error) {
                 updateUI(state);
             }
@@ -148,44 +185,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // GO LIVE button handler
-    goLiveButton.addEventListener('click', () => {
-        chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
-            if (goLiveButton.classList.contains('active')) {
-                chrome.tabs.sendMessage(tabs[0].id, {
-                    type: 'LEAVE_ROOM'
-                });
-                goLiveButton.classList.remove('active');
-                goLiveButton.innerText = 'GO LIVE';
-            } else {
-                console.log('popup: attempt to go live');
-                chrome.tabs.sendMessage(tabs[0].id, {
-                    type: 'GO_LIVE'
-                });
-                setTimeout(async () => {
-                    const state = await chrome.runtime.sendMessage({
-                        type: 'GET_NODE_STATE',
-                        tabId: tabs[0].id
-                    });
-                    if (state) {
-                        updateUI(state);
-                    }
-                }, 500);
-            }
-        });
+    goLiveButton.addEventListener('click', async () => {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (goLiveButton.classList.contains('active')) {
+            await sendLeaveRoom(tab.id);
+            goLiveButton.classList.remove('active');
+            goLiveButton.innerText = 'GO LIVE';
+        } else {
+            console.log('popup: attempt to go live');
+            await sendGoLive(tab.id);
+            setTimeout(async () => {
+                const state = await sendGetNodeState(tab.id);
+                if (state) {
+                    updateUI(state);
+                }
+            }, 500);
+        }
     });
 
     // Initial setup
     try {
-		await updateNodeList();
-		const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-		const state = await chrome.runtime.sendMessage({
-			type: 'GET_NODE_STATE',
-			tabId: tab.id  // Always pass the current tab ID
-		});
-		await updateUI(state || {});
-	} catch (error) {
-		console.error("Error during initial setup:", error);
-	}
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        document.getElementById('tabId').innerText = tab ? tab.id : 'No tab';
+        await updateNodeList(tab.id);
+        const state = await sendGetNodeState(tab.id);
+        await updateUI(state || {});
+    } catch (error) {
+        console.error("Error during initial setup:", error);
+    }
 
     // Listen for state updates
     chrome.runtime.onMessage.addListener(async (message) => {
