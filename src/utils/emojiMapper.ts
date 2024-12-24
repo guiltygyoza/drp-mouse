@@ -1,12 +1,14 @@
-const EMOJI_URLS = [
-    'https://api.dicebear.com/7.x/bottts/svg?seed=1',
-    'https://api.dicebear.com/7.x/bottts/svg?seed=2',
-    // ... we can generate more URLs dynamically
-];
+// Get the total number of available GIFs
+const TOTAL_GIFS = 500;
 
 export function getEmojiForNodeId(nodeId: string): string {
     const hash = nodeId.split('').reduce((acc, char) => {
         return acc + char.charCodeAt(0);
     }, 0);
-    return `https://api.dicebear.com/7.x/bottts/svg?seed=${hash}`;
+
+    // Map the hash to a number between 1 and 500
+    const gifNumber = (hash % TOTAL_GIFS) + 1;
+
+    // Return the path to the local GIF
+    return chrome.runtime.getURL(`images/${gifNumber}.gif`);
 }

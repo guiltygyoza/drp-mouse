@@ -89,14 +89,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function getNodeEmoji(nodeId) {
         if (!nodeId) return '👻';
-        // Use the existing emoji mapper utility
-        const emojiUrl = getEmojiForNodeId(nodeId);
+        const gifUrl = getEmojiForNodeId(nodeId);
         const img = document.createElement('img');
-        img.src = emojiUrl;
+        img.src = gifUrl;
         img.style.width = '24px';
         img.style.height = '24px';
         img.style.verticalAlign = 'middle';
         img.style.marginRight = '7px';
+        img.style.borderRadius = '50%';
         return img;
     }
 
