@@ -10,5 +10,5 @@ export function getEmojiForNodeId(nodeId: string): string {
     const gifNumber = (hash % TOTAL_GIFS) + 1;
 
     // Return the path to the local GIF
-    return chrome.runtime.getURL(`images/${gifNumber}.gif`);
+    return chrome.runtime.getURL(`src/images/${gifNumber}.gif`);
 }
